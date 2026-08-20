@@ -265,21 +265,22 @@ class ObjectDetectionDataset(Dataset):
         return canvas, final_boxes, final_labels, (S, S)
 
     def __getitem__(self, idx):
-        # 1. Apply 4-Step Select-Mosaic Augmentation if enabled
-        if self.use_mosaic and random.random() < self.mosaic_prob:
-            image, boxes_tensor, labels_tensor, orig_shape = self._load_select_mosaic(idx)
+        # 1. Evaluate Select-Mosaic trigger condition exactly once
+        is_mosaic = self.use_mosaic and (random.random() < self.mosaic_prob)
+
+        if is_mosaic:
+            image, boxes_tensor, labels_tensor, (orig_h, orig_w) = self._load_select_mosaic(idx)
             img_id = self.image_ids[idx]
         else:
             image, boxes_tensor, labels_tensor, img_id, (orig_w, orig_h) = self._load_image_and_boxes(idx)
-            orig_shape = (orig_h, orig_w)
 
         # 2. Apply Photometric / Spatial transforms (Flip, Color Jitter, Multi-scale Resize, Normalize)
         if self.transforms is not None:
-            image_tensor, boxes_tensor, labels_tensor, transformed_orig_shape = self.transforms(
+            image_tensor, boxes_tensor, labels_tensor, (raw_orig_h, raw_orig_w) = self.transforms(
                 image, boxes_tensor, labels_tensor
             )
-            if not (self.use_mosaic and random.random() < self.mosaic_prob):
-                orig_shape = transformed_orig_shape
+            if not is_mosaic:
+                orig_h, orig_w = raw_orig_h, raw_orig_w
         else:
             image_tensor = TF.to_tensor(image)
 
@@ -287,7 +288,7 @@ class ObjectDetectionDataset(Dataset):
             "boxes": boxes_tensor,
             "labels": labels_tensor,
             "image_id": img_id,
-            "orig_shape": orig_shape,
+            "orig_shape": (orig_h, orig_w),
         }
 
         return image_tensor, target
