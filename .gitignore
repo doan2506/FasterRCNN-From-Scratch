@@ -1,0 +1,83 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# PyTorch checkpoints and model weights (do not upload large binary weights to git)
+*.pth
+*.pt
+*.ckpt
+*.bin
+*.onnx
+models/*.pth
+models/best.pth
+checkpoints/
+
+# Results, logs, and experiment outputs
+results/
+runs/
+logs/
+*.log
+
+# Prediction outputs and scores
+predictions.json
+val_predictions.json
+val_score.json
+*_predictions*.json
+*_score*.json
+_val_*_tmp.json
+*oracle*.json
+*.jsonl
+
+# Large dataset image files (kept on local/kaggle only)
+public/train/images/
+public/val/images/
+*.jpg
+*.jpeg
+*.png
+*.bmp
+*.webp
+
+# Preserve structural files and tools in public
+!public/classes.json
+!public/annotations/
+!public/annotations/train.json
+!public/annotations/val.json
+!public/tools/
+!public/tools/*.py
+
+# Jupyter Notebook checkpoints & temp files
+.ipynb_checkpoints/
+*/.ipynb_checkpoints/*
+
+# Temporary test files & scratch scripts
+_test_*.py
+_test_imgs/
+scratch/
+*.tmp
+*.bak
+
+# Archive files
+*.zip
+*.tar.gz
+*.tar
+*.7z
+*.rar
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE and OS files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
