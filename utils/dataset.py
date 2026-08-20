@@ -212,9 +212,17 @@ class ObjectDetectionDataset(Dataset):
                 tcy = (tb[1] + tb[3]) / 2.0
 
                 # Crop window size (60% to 100% of original image dimensions)
+                target_aspect = qw / float(qh)
                 crop_scale = random.uniform(0.60, 1.0)
-                cw = max(10, min(int(w_img * crop_scale), w_img))
-                ch = max(10, min(int(h_img * crop_scale), h_img))
+
+                if (w_img / float(h_img)) > target_aspect:
+                    # Original image is "wider" than target aspect -> constrain by height first
+                    ch = max(10, min(int(h_img * crop_scale), h_img))
+                    cw = max(10, min(int(ch * target_aspect), w_img))
+                else:
+                    # Original image is "taller" than target aspect -> constrain by width first
+                    cw = max(10, min(int(w_img * crop_scale), w_img))
+                    ch = max(10, min(int(cw / target_aspect), h_img))
 
                 cx1 = max(0, min(int(tcx - cw / 2.0), w_img - cw))
                 cy1 = max(0, min(int(tcy - ch / 2.0), h_img - ch))
