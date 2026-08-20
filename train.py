@@ -43,6 +43,8 @@ def parse_args():
 
     # Advanced training options
     parser.add_argument("--use_expand_crop", action="store_true", default=False, help="Enable random expand + crop data augmentation (default: False)")
+    parser.add_argument("--use_mosaic", action="store_true", default=False, help="Enable selective mosaic 4-image data augmentation (default: False)")
+    parser.add_argument("--mosaic_prob", type=float, default=0.3, help="Probability for mosaic augmentation when enabled (default: 0.3)")
     parser.add_argument("--warmup_iters", type=int, default=500, help="Number of warmup iterations for LR")
     parser.add_argument("--grad_clip", type=float, default=1.0, help="Max gradient norm for clipping")
     parser.add_argument("--no_tensorboard", action="store_true", help="Disable TensorBoard logging")
@@ -312,8 +314,19 @@ def main():
         target_size=(args.img_size, args.img_size), is_train=False, multi_scale=False
     )
 
-    train_dataset = ObjectDetectionDataset(args.train_data, args.image_dir, transforms=train_transforms)
-    val_dataset = ObjectDetectionDataset(args.val_data, args.val_image_dir, transforms=val_transforms)
+    train_dataset = ObjectDetectionDataset(
+        args.train_data,
+        args.image_dir,
+        transforms=train_transforms,
+        use_mosaic=args.use_mosaic,
+        mosaic_prob=args.mosaic_prob,
+    )
+    val_dataset = ObjectDetectionDataset(
+        args.val_data,
+        args.val_image_dir,
+        transforms=val_transforms,
+        use_mosaic=False,
+    )
 
     train_sampler = DistributedSampler(train_dataset, shuffle=True) if is_distributed else None
 
