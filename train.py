@@ -42,6 +42,7 @@ def parse_args():
     parser.add_argument("--img_size", type=int, default=640, help="Target image square size for training")
 
     # Advanced training options
+    parser.add_argument("--use_expand_crop", action="store_true", default=False, help="Enable random expand + crop data augmentation (default: False)")
     parser.add_argument("--warmup_iters", type=int, default=500, help="Number of warmup iterations for LR")
     parser.add_argument("--grad_clip", type=float, default=1.0, help="Max gradient norm for clipping")
     parser.add_argument("--no_tensorboard", action="store_true", help="Disable TensorBoard logging")
@@ -302,7 +303,10 @@ def main():
 
     # Build Data Pipelines
     train_transforms = DetectionTransforms(
-        target_size=(args.img_size, args.img_size), is_train=True, multi_scale=True
+        target_size=(args.img_size, args.img_size),
+        is_train=True,
+        multi_scale=True,
+        use_expand_crop=args.use_expand_crop,
     )
     val_transforms = DetectionTransforms(
         target_size=(args.img_size, args.img_size), is_train=False, multi_scale=False

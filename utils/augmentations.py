@@ -15,10 +15,17 @@ class DetectionTransforms:
     random expand+crop, and ImageNet normalization.
     """
 
-    def __init__(self, target_size=(600, 600), is_train=True, multi_scale=True):
+    def __init__(
+        self,
+        target_size=(600, 600),
+        is_train=True,
+        multi_scale=True,
+        use_expand_crop=False,
+    ):
         self.target_size = target_size  # (height, width) — used as default / for val
         self.is_train = is_train
         self.multi_scale = multi_scale and is_train
+        self.use_expand_crop = use_expand_crop and is_train
         self.mean = [0.485, 0.456, 0.406]
         self.std = [0.229, 0.224, 0.225]
 
@@ -43,8 +50,8 @@ class DetectionTransforms:
                 image = F.adjust_saturation(image, saturation)
                 image = F.adjust_hue(image, hue)
 
-            # 2. Random Expand + Crop (SSD-style, 40% probability)
-            if random.random() > 0.6 and len(boxes) > 0:
+            # 2. Random Expand + Crop (SSD-style, 40% probability when enabled)
+            if self.use_expand_crop and random.random() > 0.6 and len(boxes) > 0:
                 image, boxes, labels = self._random_expand_crop(image, boxes, labels)
                 cur_w, cur_h = image.size  # update current working canvas dimensions
 
