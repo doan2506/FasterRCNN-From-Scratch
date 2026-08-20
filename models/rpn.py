@@ -74,7 +74,7 @@ class RPNHead(nn.Module):
     Standard RPN Head shared across all pyramid levels.
     """
 
-    def __init__(self, in_channels=256, num_anchors=3):
+    def __init__(self, in_channels=256, num_anchors=5):
         super().__init__()
         self.conv = nn.Conv2d(in_channels, in_channels, kernel_size=3, padding=1)
         self.cls_logits = nn.Conv2d(in_channels, num_anchors * 1, kernel_size=1)
