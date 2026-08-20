@@ -16,7 +16,7 @@ IDX_TO_CLASS = {idx: cls_name for idx, cls_name in enumerate(CLASSES)}
 class ObjectDetectionDataset(Dataset):
     """
     Dataset loader for Object Detection using JSON annotations.
-    Supports optional 4-image Selective Mosaic augmentation.
+    Supports Select-Mosaic 4-image data augmentation with criteria-based candidate selection.
     """
 
     def __init__(self, annotation_file: str, image_dir: str, transforms=None, use_mosaic=False, mosaic_prob=0.3):
@@ -42,6 +42,35 @@ class ObjectDetectionDataset(Dataset):
             self.annotations[img_id].append(ann)
 
         self.image_ids = list(self.images_info.keys())
+
+        # Pre-index dataset for Select-Mosaic criteria-based matching
+        self.class_to_indices = {cls_name: [] for cls_name in self.classes}
+        self.small_obj_indices = []
+        self.hard_class_indices = []
+
+        for idx, img_id in enumerate(self.image_ids):
+            anns = self.annotations.get(img_id, [])
+            img_classes = set()
+            has_small = False
+            has_hard = False
+            for a in anns:
+                c = a.get("class")
+                if c in self.class_to_indices:
+                    img_classes.add(c)
+                bbox = a.get("bbox", [0, 0, 0, 0])
+                w = bbox[2] - bbox[0]
+                h = bbox[3] - bbox[1]
+                if (w * h) < (64 * 64):
+                    has_small = True
+                if c in ["backpack", "chair", "bottle"]:
+                    has_hard = True
+
+            for c in img_classes:
+                self.class_to_indices[c].append(idx)
+            if has_small:
+                self.small_obj_indices.append(idx)
+            if has_hard:
+                self.hard_class_indices.append(idx)
 
     def __len__(self):
         return len(self.image_ids)
@@ -80,10 +109,56 @@ class ObjectDetectionDataset(Dataset):
 
         return image, boxes_tensor, labels_tensor, img_id, (orig_w, orig_h)
 
+    def _select_mosaic_candidates(self, base_idx: int) -> list:
+        """
+        [STEP 1: Selection Strategy for Select-Mosaic]
+        Selects 3 targeted partner images based on:
+        1. Class diversity: Picks images containing classes absent in the base image.
+        2. Hard-class focus: Picks images containing difficult/bottleneck classes (backpack, chair, bottle).
+        3. Scale enrichment: Picks images containing small objects (< 64x64px).
+        """
+        base_id = self.image_ids[base_idx]
+        base_anns = self.annotations.get(base_id, [])
+        base_classes = {a.get("class") for a in base_anns}
+        missing_classes = [c for c in self.classes if c not in base_classes]
+
+        selected_indices = []
+
+        # Criterion 1: Complementary class selection (diversity)
+        if missing_classes:
+            target_cls = random.choice(missing_classes)
+            pool = self.class_to_indices.get(target_cls, [])
+            if pool:
+                cand = random.choice(pool)
+                if cand != base_idx:
+                    selected_indices.append(cand)
+
+        # Criterion 2: Hard class selection (backpack, chair, bottle)
+        if len(selected_indices) < 2 and self.hard_class_indices:
+            cand = random.choice(self.hard_class_indices)
+            if cand != base_idx and cand not in selected_indices:
+                selected_indices.append(cand)
+
+        # Criterion 3: Small object scale enrichment (< 64x64)
+        if len(selected_indices) < 3 and self.small_obj_indices:
+            cand = random.choice(self.small_obj_indices)
+            if cand != base_idx and cand not in selected_indices:
+                selected_indices.append(cand)
+
+        # Fallback filler if any pool was empty or duplicate
+        while len(selected_indices) < 3:
+            rand_idx = random.randint(0, len(self.image_ids) - 1)
+            if rand_idx != base_idx and rand_idx not in selected_indices:
+                selected_indices.append(rand_idx)
+
+        return selected_indices
+
     def _load_mosaic(self, idx: int):
         """
-        Selective Mosaic 4-Image Augmentation:
-        Combines 4 random images into a 2x2 mosaic canvas with random center point (xc, yc).
+        [STEPS 2 & 3: Select-Mosaic 4-Image Stitching & Target Transformation]
+        1. Calls _select_mosaic_candidates(idx) to pick 3 targeted partner images.
+        2. Stitches 4 selected images onto a 2x2 grid with random center point (xc, yc).
+        3. Scales, shifts, clips and filters corresponding bounding boxes and labels.
         """
         target_size = 640
         if self.transforms is not None and hasattr(self.transforms, "target_size"):
@@ -93,18 +168,19 @@ class ObjectDetectionDataset(Dataset):
         xc = random.randint(int(0.35 * S), int(0.65 * S))
         yc = random.randint(int(0.35 * S), int(0.65 * S))
 
-        # Quadrant placements: (offset_x, offset_y, quadrant_width, quadrant_height)
+        # Quadrants: (offset_x, offset_y, quadrant_width, quadrant_height)
         quadrants = [
-            (0, 0, xc, yc),           # Top-Left (current sample)
-            (xc, 0, S - xc, yc),      # Top-Right
-            (0, yc, xc, S - yc),      # Bottom-Left
-            (xc, yc, S - xc, S - yc)  # Bottom-Right
+            (0, 0, xc, yc),           # Top-Left (base image)
+            (xc, 0, S - xc, yc),      # Top-Right (selected partner 1)
+            (0, yc, xc, S - yc),      # Bottom-Left (selected partner 2)
+            (xc, yc, S - xc, S - yc)  # Bottom-Right (selected partner 3)
         ]
 
-        # Select 3 other random image indices
-        other_indices = [random.randint(0, len(self.image_ids) - 1) for _ in range(3)]
-        mosaic_indices = [idx] + other_indices
+        # Step 1: Select 3 targeted candidate images
+        partner_indices = self._select_mosaic_candidates(idx)
+        mosaic_indices = [idx] + partner_indices
 
+        # Step 2: Create canvas and paste quadrants
         canvas = Image.new("RGB", (S, S), (114, 114, 114))
         all_boxes = []
         all_labels = []
@@ -112,10 +188,11 @@ class ObjectDetectionDataset(Dataset):
         for (off_x, off_y, qw, qh), m_idx in zip(quadrants, mosaic_indices):
             m_img, m_boxes, m_labels, _, (m_w, m_h) = self._load_image_and_boxes(m_idx)
 
-            # Resize image to quadrant dimensions and paste
+            # Resize to quadrant dimensions and paste
             resized_img = m_img.resize((qw, qh))
             canvas.paste(resized_img, (off_x, off_y))
 
+            # Step 3: Transform bounding boxes to composite coordinates
             if len(m_boxes) > 0:
                 sx = qw / float(m_w)
                 sy = qh / float(m_h)
@@ -142,7 +219,7 @@ class ObjectDetectionDataset(Dataset):
         return canvas, final_boxes, final_labels, (S, S)
 
     def __getitem__(self, idx):
-        # 1. Apply Selective Mosaic Augmentation if enabled
+        # 1. Apply Select-Mosaic Augmentation if enabled
         if self.use_mosaic and random.random() < self.mosaic_prob:
             image, boxes_tensor, labels_tensor, orig_shape = self._load_mosaic(idx)
             img_id = self.image_ids[idx]
@@ -150,7 +227,7 @@ class ObjectDetectionDataset(Dataset):
             image, boxes_tensor, labels_tensor, img_id, (orig_w, orig_h) = self._load_image_and_boxes(idx)
             orig_shape = (orig_h, orig_w)
 
-        # 2. Apply Spatial / Photometric transforms (Flip, Color Jitter, Resize, Normalize)
+        # 2. Apply Photometric / Spatial transforms (Flip, Color Jitter, Resize, Normalize)
         if self.transforms is not None:
             image_tensor, boxes_tensor, labels_tensor, transformed_orig_shape = self.transforms(
                 image, boxes_tensor, labels_tensor
