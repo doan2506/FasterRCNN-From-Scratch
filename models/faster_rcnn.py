@@ -23,6 +23,7 @@ class FasterRCNN(nn.Module):
         backbone_name="resnet50",
         pretrained=True,
         freeze_bn=True,
+        ratios=(0.33, 0.5, 1.0, 2.0, 3.0),
         conf_threshold=0.05,
         nms_threshold=0.5,
         max_detections_per_img=100,
@@ -45,9 +46,10 @@ class FasterRCNN(nn.Module):
         # 2. Feature Pyramid Network (FPN)
         self.fpn = FeaturePyramidNetwork(in_channels_list=self.backbone.out_channels, out_channels=256)
 
-        # 3. Region Proposal Network (RPN)
+        # 3. Region Proposal Network (RPN) with 5 aspect ratios
         self.rpn = RegionProposalNetwork(
             in_channels=256,
+            ratios=ratios,
             rpn_pre_nms_top_n_train=rpn_pre_nms_top_n_train,
             rpn_post_nms_top_n_train=rpn_post_nms_top_n_train,
             rpn_pre_nms_top_n_test=rpn_pre_nms_top_n_test,

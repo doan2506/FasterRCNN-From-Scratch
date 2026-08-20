@@ -14,7 +14,7 @@ class RPNAnchorGenerator(nn.Module):
         self,
         strides=(4, 8, 16, 32, 64),
         base_sizes=(32, 64, 128, 256, 512),
-        ratios=(0.5, 1.0, 2.0),
+        ratios=(0.33, 0.5, 1.0, 2.0, 3.0),
     ):
         super().__init__()
         self.strides = strides
@@ -24,7 +24,7 @@ class RPNAnchorGenerator(nn.Module):
 
     def _generate_base_anchors(self, base_size: float, device: torch.device) -> torch.Tensor:
         """
-        Generates 3 base anchors centered at (0, 0) for a given base size across ratios.
+        Generates base anchors centered at (0, 0) for a given base size across ratios.
         """
         ratios = self.ratios
         aspect_ratios = torch.sqrt(ratios)
@@ -124,6 +124,7 @@ class RegionProposalNetwork(nn.Module):
     def __init__(
         self,
         in_channels=256,
+        ratios=(0.33, 0.5, 1.0, 2.0, 3.0),
         rpn_pre_nms_top_n_train=2000,
         rpn_post_nms_top_n_train=2000,
         rpn_pre_nms_top_n_test=1000,
@@ -133,7 +134,7 @@ class RegionProposalNetwork(nn.Module):
         rpn_positive_fraction=0.5,
     ):
         super().__init__()
-        self.anchor_generator = RPNAnchorGenerator()
+        self.anchor_generator = RPNAnchorGenerator(ratios=ratios)
         self.head = RPNHead(in_channels=in_channels, num_anchors=self.anchor_generator.num_anchors_per_location)
 
         self.pre_nms_top_n_train = rpn_pre_nms_top_n_train
