@@ -43,12 +43,12 @@ def parse_args():
     parser.add_argument("--num_workers", type=int, default=2, help="DataLoader num workers")
     parser.add_argument("--img_size", type=int, default=640, help="Target image square size for training")
     parser.add_argument("--fc_dim", type=int, default=1024, help="FC dimension in Fast R-CNN Head (default: 1024)")
-    parser.add_argument("--dropout", type=float, default=0.3, help="Dropout probability in Fast R-CNN Head (default: 0.3)")
+    parser.add_argument("--dropout", type=float, default=0.0, help="Dropout probability in Fast R-CNN Head (default: 0.0)")
 
     # Advanced training options
-    parser.add_argument("--no_expand_crop", dest="use_expand_crop", action="store_false", default=True, help="Disable random expand + crop data augmentation")
-    parser.add_argument("--no_mosaic", dest="use_mosaic", action="store_false", default=True, help="Disable selective mosaic data augmentation (enabled by default)")
-    parser.add_argument("--mosaic_prob", type=float, default=0.5, help="Probability for mosaic augmentation when enabled (default: 0.5)")
+    parser.add_argument("--use_expand_crop", action="store_true", default=False, help="Enable random expand + crop data augmentation (default: False)")
+    parser.add_argument("--use_mosaic", action="store_true", default=False, help="Enable selective mosaic 4-image data augmentation (default: False)")
+    parser.add_argument("--mosaic_prob", type=float, default=0.3, help="Probability for mosaic augmentation when enabled (default: 0.3)")
     parser.add_argument("--warmup_iters", type=int, default=500, help="Number of warmup iterations for LR")
     parser.add_argument("--grad_clip", type=float, default=1.0, help="Max gradient norm for clipping")
     parser.add_argument("--no_tensorboard", action="store_true", help="Disable TensorBoard logging")

@@ -20,7 +20,7 @@ class DetectionTransforms:
         target_size=(600, 600),
         is_train=True,
         multi_scale=True,
-        use_expand_crop=True,
+        use_expand_crop=False,
     ):
         self.target_size = target_size  # (height, width) — used as default / for val
         self.is_train = is_train
