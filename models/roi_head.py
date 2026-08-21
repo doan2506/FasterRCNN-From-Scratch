@@ -213,8 +213,8 @@ class RoIHeads(nn.Module):
         if len(labels) == 0:
             return torch.tensor(0.0, device=cls_scores.device), torch.tensor(0.0, device=cls_scores.device)
 
-        # 1. Classification CrossEntropy Loss over (num_classes + 1)
-        loss_cls = F.cross_entropy(cls_scores, labels)
+        # 1. Classification CrossEntropy Loss with Label Smoothing over (num_classes + 1)
+        loss_cls = F.cross_entropy(cls_scores, labels, label_smoothing=0.1)
 
         # 2. Regression Loss strictly on foreground positive RoIs
         pos_mask = labels < self.bg_class_idx

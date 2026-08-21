@@ -59,7 +59,9 @@ def load_model(model_path: str, backbone: str, conf_thresh: float, nms_thresh: f
             checkpoint = torch.load(model_path, map_location=device)
 
     detected_backbone = backbone
-    detected_fc_dim = 512
+    detected_fc_dim = 1024
+    detected_ratios = (0.5, 1.0, 2.0)
+    detected_scales = (1.0, 2 ** (1 / 3), 2 ** (2 / 3))
     state_dict = None
 
     if checkpoint is not None:
@@ -70,14 +72,25 @@ def load_model(model_path: str, backbone: str, conf_thresh: float, nms_thresh: f
         else:
             state_dict = checkpoint
 
-    if state_dict is not None and "roi_heads.box_head.fc6.weight" in state_dict:
-        detected_fc_dim = state_dict["roi_heads.box_head.fc6.weight"].shape[0]
+    if state_dict is not None:
+        if "roi_heads.box_head.fc6.weight" in state_dict:
+            detected_fc_dim = state_dict["roi_heads.box_head.fc6.weight"].shape[0]
+        if "rpn.anchor_generator.ratios" in state_dict:
+            detected_ratios = tuple(state_dict["rpn.anchor_generator.ratios"].cpu().tolist())
+        if "rpn.anchor_generator.scales" in state_dict:
+            detected_scales = tuple(state_dict["rpn.anchor_generator.scales"].cpu().tolist())
+        elif "rpn.head.cls_logits.weight" in state_dict:
+            num_anchors = state_dict["rpn.head.cls_logits.weight"].shape[0]
+            if num_anchors == len(detected_ratios):
+                detected_scales = (1.0,)
 
-    print(f"Instantiating model: FASTER R-CNN (Backbone: {detected_backbone}, FC Dim: {detected_fc_dim})")
+    print(f"Instantiating model: FASTER R-CNN (Backbone: {detected_backbone}, FC Dim: {detected_fc_dim}, Anchors/Loc: {len(detected_ratios)*len(detected_scales)})")
 
     model = FasterRCNN(
         num_classes=len(CLASSES),
         backbone_name=detected_backbone,
+        ratios=detected_ratios,
+        scales=detected_scales,
         fc_dim=detected_fc_dim,
         dropout_p=0.0,
         pretrained=False,

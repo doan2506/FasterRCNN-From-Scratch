@@ -8,6 +8,7 @@ from utils.nms import nms
 class RPNAnchorGenerator(nn.Module):
     """
     Generates multi-scale anchor boxes across pyramid levels (P2, P3, P4, P5, P6).
+    Supports intermediate octave scales per level for denser scale coverage.
     """
 
     def __init__(
@@ -15,21 +16,30 @@ class RPNAnchorGenerator(nn.Module):
         strides=(4, 8, 16, 32, 64),
         base_sizes=(32, 64, 128, 256, 512),
         ratios=(0.5, 1.0, 2.0),
+        scales=(1.0, 2 ** (1 / 3), 2 ** (2 / 3)),
     ):
         super().__init__()
         self.strides = strides
         self.base_sizes = base_sizes
         self.register_buffer("ratios", torch.tensor(ratios, dtype=torch.float32))
-        self.num_anchors_per_location = len(ratios)
+        self.register_buffer("scales", torch.tensor(scales, dtype=torch.float32))
+        self.num_anchors_per_location = len(ratios) * len(scales)
 
     def _generate_base_anchors(self, base_size: float, device: torch.device) -> torch.Tensor:
         """
-        Generates base anchors centered at (0, 0) for a given base size across ratios.
+        Generates base anchors centered at (0, 0) for combinations of scales and ratios.
         """
         ratios = self.ratios
-        aspect_ratios = torch.sqrt(ratios)
-        h = base_size / aspect_ratios
-        w = base_size * aspect_ratios
+        scales = self.scales
+
+        s_grid, r_grid = torch.meshgrid(scales, ratios, indexing="ij")
+        s_flat = s_grid.reshape(-1)
+        r_flat = r_grid.reshape(-1)
+
+        sizes = base_size * s_flat
+        aspect_ratios = torch.sqrt(r_flat)
+        h = sizes / aspect_ratios
+        w = sizes * aspect_ratios
 
         xmin = -0.5 * w
         ymin = -0.5 * h
@@ -51,7 +61,7 @@ class RPNAnchorGenerator(nn.Module):
         for key, stride, base_size in zip(level_keys, self.strides, self.base_sizes):
             feat = feature_maps[key]
             _, _, feat_h, feat_w = feat.shape
-            base_anchors = self._generate_base_anchors(base_size, device)  # (3, 4)
+            base_anchors = self._generate_base_anchors(base_size, device)
 
             shift_x = (torch.arange(0, feat_w, device=device, dtype=torch.float32) + 0.5) * stride
             shift_y = (torch.arange(0, feat_h, device=device, dtype=torch.float32) + 0.5) * stride
@@ -62,7 +72,6 @@ class RPNAnchorGenerator(nn.Module):
                 dim=1,
             )
 
-            # (H*W, 1, 4) + (1, 3, 4) -> (H*W, 3, 4) -> (H*W*3, 4)
             anchors = (shifts[:, None, :] + base_anchors[None, :, :]).reshape(-1, 4)
             all_anchors.append(anchors)
 
@@ -125,6 +134,7 @@ class RegionProposalNetwork(nn.Module):
         self,
         in_channels=256,
         ratios=(0.5, 1.0, 2.0),
+        scales=(1.0, 2 ** (1 / 3), 2 ** (2 / 3)),
         rpn_pre_nms_top_n_train=2000,
         rpn_post_nms_top_n_train=2000,
         rpn_pre_nms_top_n_test=1000,
@@ -134,7 +144,7 @@ class RegionProposalNetwork(nn.Module):
         rpn_positive_fraction=0.5,
     ):
         super().__init__()
-        self.anchor_generator = RPNAnchorGenerator(ratios=ratios)
+        self.anchor_generator = RPNAnchorGenerator(ratios=ratios, scales=scales)
         self.head = RPNHead(in_channels=in_channels, num_anchors=self.anchor_generator.num_anchors_per_location)
 
         self.pre_nms_top_n_train = rpn_pre_nms_top_n_train
