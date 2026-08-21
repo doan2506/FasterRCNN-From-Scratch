@@ -37,9 +37,11 @@ def parse_args():
     parser.add_argument("--batch_size", type=int, default=8, help="Batch size per GPU")
     parser.add_argument("--lr", type=float, default=1e-4, help="Base learning rate for heads/RPN")
     parser.add_argument("--backbone_lr_ratio", type=float, default=0.1, help="LR multiplier for backbone fine-tuning")
-    parser.add_argument("--weight_decay", type=float, default=1e-4, help="Weight decay")
+    parser.add_argument("--weight_decay", type=float, default=5e-4, help="Weight decay (default: 5e-4)")
     parser.add_argument("--num_workers", type=int, default=2, help="DataLoader num workers")
     parser.add_argument("--img_size", type=int, default=640, help="Target image square size for training")
+    parser.add_argument("--fc_dim", type=int, default=512, help="FC dimension in Fast R-CNN Head (default: 512)")
+    parser.add_argument("--dropout", type=float, default=0.5, help="Dropout probability in Fast R-CNN Head (default: 0.5)")
 
     # Advanced training options
     parser.add_argument("--use_expand_crop", action="store_true", default=False, help="Enable random expand + crop data augmentation (default: False)")
@@ -362,6 +364,8 @@ def main():
     model = FasterRCNN(
         num_classes=len(train_dataset.classes),
         backbone_name=args.backbone,
+        fc_dim=args.fc_dim,
+        dropout_p=args.dropout,
         pretrained=True,
     ).to(device)
 

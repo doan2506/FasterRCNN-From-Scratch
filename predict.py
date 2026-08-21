@@ -59,6 +59,7 @@ def load_model(model_path: str, backbone: str, conf_thresh: float, nms_thresh: f
             checkpoint = torch.load(model_path, map_location=device)
 
     detected_backbone = backbone
+    detected_fc_dim = 512
     state_dict = None
 
     if checkpoint is not None:
@@ -69,11 +70,16 @@ def load_model(model_path: str, backbone: str, conf_thresh: float, nms_thresh: f
         else:
             state_dict = checkpoint
 
-    print(f"Instantiating model: FASTER R-CNN (Backbone: {detected_backbone})")
+    if state_dict is not None and "roi_heads.box_head.fc6.weight" in state_dict:
+        detected_fc_dim = state_dict["roi_heads.box_head.fc6.weight"].shape[0]
+
+    print(f"Instantiating model: FASTER R-CNN (Backbone: {detected_backbone}, FC Dim: {detected_fc_dim})")
 
     model = FasterRCNN(
         num_classes=len(CLASSES),
         backbone_name=detected_backbone,
+        fc_dim=detected_fc_dim,
+        dropout_p=0.0,
         pretrained=False,
         conf_threshold=conf_thresh,
         nms_threshold=nms_thresh,

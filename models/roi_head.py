@@ -9,15 +9,17 @@ from utils.nms import batched_nms
 class FastRCNNHead(nn.Module):
     """
     Standard Two-FC MLP Head for Fast R-CNN classification and class-specific bounding box regression.
+    Includes Dropout and configurable fc_dim for effective regularization.
     """
 
-    def __init__(self, in_channels=256, roi_size=(7, 7), num_classes=5, fc_dim=1024):
+    def __init__(self, in_channels=256, roi_size=(7, 7), num_classes=5, fc_dim=512, dropout_p=0.5):
         super().__init__()
         self.num_classes = num_classes
         in_dim = in_channels * roi_size[0] * roi_size[1]
 
         self.fc6 = nn.Linear(in_dim, fc_dim)
         self.fc7 = nn.Linear(fc_dim, fc_dim)
+        self.dropout = nn.Dropout(p=dropout_p) if dropout_p > 0.0 else None
 
         # num_classes + 1 (background is last class index: num_classes)
         self.cls_score = nn.Linear(fc_dim, num_classes + 1)
@@ -41,7 +43,11 @@ class FastRCNNHead(nn.Module):
         """
         x = roi_features.flatten(start_dim=1)
         x = F.relu(self.fc6(x), inplace=False)
+        if self.dropout is not None:
+            x = self.dropout(x)
         x = F.relu(self.fc7(x), inplace=False)
+        if self.dropout is not None:
+            x = self.dropout(x)
 
         cls_scores = self.cls_score(x)
         bbox_deltas = self.bbox_pred(x)
@@ -51,7 +57,7 @@ class FastRCNNHead(nn.Module):
 
 class RoIHeads(nn.Module):
     """
-    Faster R-CNN RoI Head combining Multi-Scale RoIAlign, 2-FC Head,
+    Faster R-CNN RoI Head combining Multi-Scale RoIAlign, 2-FC Head with Dropout,
     RoI Target Sampling, Loss Computation, and Inference Post-processing.
     """
 
@@ -60,7 +66,8 @@ class RoIHeads(nn.Module):
         in_channels=256,
         num_classes=5,
         roi_size=(7, 7),
-        fc_dim=1024,
+        fc_dim=512,
+        dropout_p=0.5,
         batch_size_per_image=512,
         positive_fraction=0.25,
         fg_iou_thresh=0.5,
@@ -75,7 +82,13 @@ class RoIHeads(nn.Module):
         self.num_classes = num_classes
         self.bg_class_idx = num_classes
         self.roi_align = MultiScaleRoIAlign(output_size=roi_size)
-        self.box_head = FastRCNNHead(in_channels=in_channels, roi_size=roi_size, num_classes=num_classes, fc_dim=fc_dim)
+        self.box_head = FastRCNNHead(
+            in_channels=in_channels,
+            roi_size=roi_size,
+            num_classes=num_classes,
+            fc_dim=fc_dim,
+            dropout_p=dropout_p,
+        )
 
         self.batch_size_per_image = batch_size_per_image
         self.positive_fraction = positive_fraction

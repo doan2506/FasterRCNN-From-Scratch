@@ -23,7 +23,7 @@ class FasterRCNN(nn.Module):
         backbone_name="resnet50",
         pretrained=True,
         freeze_bn=True,
-        ratios=(0.33, 0.5, 1.0, 2.0, 3.0),
+        ratios=(0.5, 1.0, 2.0),
         conf_threshold=0.05,
         nms_threshold=0.5,
         max_detections_per_img=100,
@@ -31,6 +31,8 @@ class FasterRCNN(nn.Module):
         rpn_post_nms_top_n_train=2000,
         rpn_pre_nms_top_n_test=1000,
         rpn_post_nms_top_n_test=1000,
+        fc_dim=512,
+        dropout_p=0.5,
         roi_batch_size_per_image=512,
         roi_positive_fraction=0.25,
     ):
@@ -46,7 +48,7 @@ class FasterRCNN(nn.Module):
         # 2. Feature Pyramid Network (FPN)
         self.fpn = FeaturePyramidNetwork(in_channels_list=self.backbone.out_channels, out_channels=256)
 
-        # 3. Region Proposal Network (RPN) with 5 aspect ratios
+        # 3. Region Proposal Network (RPN)
         self.rpn = RegionProposalNetwork(
             in_channels=256,
             ratios=ratios,
@@ -59,12 +61,13 @@ class FasterRCNN(nn.Module):
             rpn_positive_fraction=0.5,
         )
 
-        # 4. RoI Head (Multi-Scale RoIAlign + Fast R-CNN 2-FC Head)
+        # 4. RoI Head (Multi-Scale RoIAlign + Fast R-CNN 2-FC Head with Dropout)
         self.roi_heads = RoIHeads(
             in_channels=256,
             num_classes=num_classes,
             roi_size=(7, 7),
-            fc_dim=1024,
+            fc_dim=fc_dim,
+            dropout_p=dropout_p,
             batch_size_per_image=roi_batch_size_per_image,
             positive_fraction=roi_positive_fraction,
             fg_iou_thresh=0.5,

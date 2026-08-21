@@ -14,7 +14,7 @@ class RPNAnchorGenerator(nn.Module):
         self,
         strides=(4, 8, 16, 32, 64),
         base_sizes=(32, 64, 128, 256, 512),
-        ratios=(0.33, 0.5, 1.0, 2.0, 3.0),
+        ratios=(0.5, 1.0, 2.0),
     ):
         super().__init__()
         self.strides = strides
@@ -74,7 +74,7 @@ class RPNHead(nn.Module):
     Standard RPN Head shared across all pyramid levels.
     """
 
-    def __init__(self, in_channels=256, num_anchors=5):
+    def __init__(self, in_channels=256, num_anchors=3):
         super().__init__()
         self.conv = nn.Conv2d(in_channels, in_channels, kernel_size=3, padding=1)
         self.cls_logits = nn.Conv2d(in_channels, num_anchors * 1, kernel_size=1)
@@ -124,7 +124,7 @@ class RegionProposalNetwork(nn.Module):
     def __init__(
         self,
         in_channels=256,
-        ratios=(0.33, 0.5, 1.0, 2.0, 3.0),
+        ratios=(0.5, 1.0, 2.0),
         rpn_pre_nms_top_n_train=2000,
         rpn_post_nms_top_n_train=2000,
         rpn_pre_nms_top_n_test=1000,
