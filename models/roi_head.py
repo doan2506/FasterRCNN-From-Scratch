@@ -9,10 +9,9 @@ from utils.nms import batched_nms
 class FastRCNNHead(nn.Module):
     """
     Standard Two-FC MLP Head for Fast R-CNN classification and class-specific bounding box regression.
-    Includes Dropout and configurable fc_dim for effective regularization.
     """
 
-    def __init__(self, in_channels=256, roi_size=(7, 7), num_classes=5, fc_dim=512, dropout_p=0.5):
+    def __init__(self, in_channels=256, roi_size=(7, 7), num_classes=5, fc_dim=1024, dropout_p=0.0):
         super().__init__()
         self.num_classes = num_classes
         in_dim = in_channels * roi_size[0] * roi_size[1]
@@ -57,7 +56,7 @@ class FastRCNNHead(nn.Module):
 
 class RoIHeads(nn.Module):
     """
-    Faster R-CNN RoI Head combining Multi-Scale RoIAlign, 2-FC Head with Dropout,
+    Faster R-CNN RoI Head combining Multi-Scale RoIAlign, 2-FC Head,
     RoI Target Sampling, Loss Computation, and Inference Post-processing.
     """
 
@@ -66,8 +65,8 @@ class RoIHeads(nn.Module):
         in_channels=256,
         num_classes=5,
         roi_size=(7, 7),
-        fc_dim=512,
-        dropout_p=0.5,
+        fc_dim=1024,
+        dropout_p=0.0,
         batch_size_per_image=512,
         positive_fraction=0.25,
         fg_iou_thresh=0.5,
