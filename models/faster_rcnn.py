@@ -33,7 +33,7 @@ class FasterRCNN(nn.Module):
         rpn_pre_nms_top_n_test=2000,
         rpn_post_nms_top_n_test=1500,
         fc_dim=1024,
-        dropout_p=0.0,
+        dropout_p=0.3,
         roi_batch_size_per_image=512,
         roi_positive_fraction=0.25,
     ):

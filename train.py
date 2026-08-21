@@ -43,7 +43,7 @@ def parse_args():
     parser.add_argument("--num_workers", type=int, default=2, help="DataLoader num workers")
     parser.add_argument("--img_size", type=int, default=640, help="Target image square size for training")
     parser.add_argument("--fc_dim", type=int, default=1024, help="FC dimension in Fast R-CNN Head (default: 1024)")
-    parser.add_argument("--dropout", type=float, default=0.0, help="Dropout probability in Fast R-CNN Head (default: 0.0)")
+    parser.add_argument("--dropout", type=float, default=0.3, help="Dropout probability in Fast R-CNN Head (default: 0.3)")
 
     # Advanced training options
     parser.add_argument("--use_expand_crop", action="store_true", default=False, help="Enable random expand + crop data augmentation (default: False)")

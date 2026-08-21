@@ -11,7 +11,7 @@ class FastRCNNHead(nn.Module):
     Standard Two-FC MLP Head for Fast R-CNN classification and class-specific bounding box regression.
     """
 
-    def __init__(self, in_channels=256, roi_size=(7, 7), num_classes=5, fc_dim=1024, dropout_p=0.0):
+    def __init__(self, in_channels=256, roi_size=(7, 7), num_classes=5, fc_dim=1024, dropout_p=0.3):
         super().__init__()
         self.num_classes = num_classes
         in_dim = in_channels * roi_size[0] * roi_size[1]
@@ -66,7 +66,7 @@ class RoIHeads(nn.Module):
         num_classes=5,
         roi_size=(7, 7),
         fc_dim=1024,
-        dropout_p=0.0,
+        dropout_p=0.3,
         batch_size_per_image=512,
         positive_fraction=0.25,
         fg_iou_thresh=0.5,
