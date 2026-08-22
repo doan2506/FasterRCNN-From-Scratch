@@ -2,8 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from models.roi_align import MultiScaleRoIAlign
-from utils.box_utils import box_iou, box_transform, box_decode, clip_boxes
-from utils.nms import batched_nms
+from utils.box_utils import box_iou, box_transform, box_decode, clip_boxes, bbox_iou_loss
+from utils.nms import batched_nms, batched_soft_nms
 
 
 class FastRCNNHead(nn.Module):
@@ -58,6 +58,7 @@ class RoIHeads(nn.Module):
     """
     Faster R-CNN RoI Head combining Multi-Scale RoIAlign, 2-FC Head,
     RoI Target Sampling, Loss Computation, and Inference Post-processing.
+    Supports CIoU/GIoU/DIoU loss and Soft-NMS post-processing.
     """
 
     def __init__(
@@ -76,6 +77,11 @@ class RoIHeads(nn.Module):
         nms_thresh=0.5,
         detections_per_img=100,
         bbox_reg_weights=(10.0, 10.0, 5.0, 5.0),
+        box_loss_type="smooth_l1",
+        box_loss_weight=1.0,
+        use_soft_nms=False,
+        soft_nms_sigma=0.5,
+        soft_nms_method="gaussian",
     ):
         super().__init__()
         self.num_classes = num_classes
@@ -100,6 +106,12 @@ class RoIHeads(nn.Module):
         self.detections_per_img = detections_per_img
         self.bbox_reg_weights = bbox_reg_weights
 
+        self.box_loss_type = box_loss_type.lower()
+        self.box_loss_weight = box_loss_weight
+        self.use_soft_nms = use_soft_nms
+        self.soft_nms_sigma = soft_nms_sigma
+        self.soft_nms_method = soft_nms_method
+
     def forward(self, feature_maps: dict, proposals_list: list, image_shapes: list, targets: list = None):
         """
         feature_maps: dict of pyramid feature maps (p2..p5)
@@ -118,7 +130,7 @@ class RoIHeads(nn.Module):
 
             # 3. Compute RoI classification and box regression losses
             loss_cls, loss_reg = self._compute_losses(
-                cls_scores, bbox_deltas, sampled_labels, sampled_deltas
+                cls_scores, bbox_deltas, sampled_labels, sampled_deltas, sampled_proposals
             )
             return None, {"loss_roi_cls": loss_cls, "loss_roi_reg": loss_reg}
         else:
@@ -204,7 +216,14 @@ class RoIHeads(nn.Module):
     def _select_training_samples(self, proposals_list: list, targets: list):
         return self._sample_roi_targets(proposals_list, targets, proposals_list[0].device)
 
-    def _compute_losses(self, cls_scores: torch.Tensor, bbox_deltas: torch.Tensor, labels: torch.Tensor, target_deltas: torch.Tensor):
+    def _compute_losses(
+        self,
+        cls_scores: torch.Tensor,
+        bbox_deltas: torch.Tensor,
+        labels: torch.Tensor,
+        target_deltas: torch.Tensor,
+        sampled_proposals: list = None,
+    ):
         if len(labels) == 0:
             return torch.tensor(0.0, device=cls_scores.device), torch.tensor(0.0, device=cls_scores.device)
 
@@ -221,8 +240,16 @@ class RoIHeads(nn.Module):
             pos_pred_deltas = bbox_deltas[pos_mask].view(-1, self.num_classes + 1, 4)
             selected_pred_deltas = pos_pred_deltas[torch.arange(num_pos, device=labels.device), pos_labels]
 
-            loss_reg = F.smooth_l1_loss(selected_pred_deltas, target_deltas[pos_mask], beta=1.0, reduction="sum")
-            loss_reg = loss_reg / max(float(len(labels)), 1.0)
+            if self.box_loss_type in ["ciou", "giou", "diou", "iou"] and sampled_proposals is not None:
+                cat_props = torch.cat(sampled_proposals, dim=0)
+                pos_props = cat_props[pos_mask]
+                pred_pos_boxes = box_decode(pos_props, selected_pred_deltas, weights=self.bbox_reg_weights)
+                target_pos_boxes = box_decode(pos_props, target_deltas[pos_mask], weights=self.bbox_reg_weights)
+                loss_reg = bbox_iou_loss(pred_pos_boxes, target_pos_boxes, loss_type=self.box_loss_type, reduction="sum")
+                loss_reg = (loss_reg / max(float(num_pos), 1.0)) * self.box_loss_weight
+            else:
+                loss_reg = F.smooth_l1_loss(selected_pred_deltas, target_deltas[pos_mask], beta=1.0, reduction="sum")
+                loss_reg = (loss_reg / max(float(len(labels)), 1.0)) * self.box_loss_weight
         else:
             loss_reg = torch.tensor(0.0, device=cls_scores.device)
 
@@ -294,16 +321,33 @@ class RoIHeads(nn.Module):
             cat_scores = torch.cat(all_scores, dim=0)
             cat_labels = torch.cat(all_labels, dim=0)
 
-            # Apply Per-class NMS
-            keep_indices = batched_nms(cat_boxes, cat_scores, cat_labels, self.nms_thresh)
+            # Apply Per-class NMS or Soft-NMS
+            if self.use_soft_nms:
+                keep_boxes, keep_scores, keep_labels = batched_soft_nms(
+                    cat_boxes,
+                    cat_scores,
+                    cat_labels,
+                    iou_threshold=self.nms_thresh,
+                    sigma=self.soft_nms_sigma,
+                    score_threshold=self.score_thresh,
+                    method=self.soft_nms_method,
+                )
+            else:
+                keep_indices = batched_nms(cat_boxes, cat_scores, cat_labels, self.nms_thresh)
+                keep_boxes = cat_boxes[keep_indices]
+                keep_scores = cat_scores[keep_indices]
+                keep_labels = cat_labels[keep_indices]
 
-            if len(keep_indices) > self.detections_per_img:
-                keep_indices = keep_indices[:self.detections_per_img]
+            if len(keep_boxes) > self.detections_per_img:
+                keep_boxes = keep_boxes[:self.detections_per_img]
+                keep_scores = keep_scores[:self.detections_per_img]
+                keep_labels = keep_labels[:self.detections_per_img]
 
             results.append({
-                "boxes": cat_boxes[keep_indices],
-                "scores": cat_scores[keep_indices],
-                "labels": cat_labels[keep_indices],
+                "boxes": keep_boxes,
+                "scores": keep_scores,
+                "labels": keep_labels,
             })
 
         return results
+

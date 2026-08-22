@@ -46,12 +46,13 @@ def parse_args():
     parser.add_argument("--dropout", type=float, default=0.0, help="Dropout probability in Fast R-CNN Head (default: 0.0)")
 
     # Advanced training options
-    parser.add_argument("--use_expand_crop", action="store_true", default=True, help="Enable random expand + crop data augmentation (default: True)")
-    parser.add_argument("--no_expand_crop", dest="use_expand_crop", action="store_false", help="Disable random expand + crop data augmentation")
-    parser.add_argument("--use_mosaic", action="store_true", default=False, help="Enable selective mosaic 4-image data augmentation (default: False)")
-    parser.add_argument("--mosaic_prob", type=float, default=0.3, help="Probability for mosaic augmentation when enabled (default: 0.3)")
     parser.add_argument("--warmup_iters", type=int, default=500, help="Number of warmup iterations for LR")
     parser.add_argument("--grad_clip", type=float, default=1.0, help="Max gradient norm for clipping")
+    parser.add_argument("--box_loss_type", type=str, default="smooth_l1", choices=["ciou", "giou", "diou", "smooth_l1"], help="Bounding box regression loss type (default: smooth_l1)")
+    parser.add_argument("--box_loss_weight", type=float, default=1.0, help="Loss weight for box regression (default: 1.0)")
+    parser.add_argument("--use_soft_nms", action="store_true", default=False, help="Enable Soft-NMS (default: False)")
+    parser.add_argument("--soft_nms_sigma", type=float, default=0.5, help="Soft-NMS Gaussian sigma (default: 0.5)")
+    parser.add_argument("--soft_nms_method", type=str, default="gaussian", choices=["gaussian", "linear", "hard"], help="Soft-NMS method (default: gaussian)")
     parser.add_argument("--no_tensorboard", action="store_true", help="Disable TensorBoard logging")
     return parser.parse_args()
 
@@ -313,7 +314,7 @@ def main():
         target_size=(args.img_size, args.img_size),
         is_train=True,
         multi_scale=True,
-        use_expand_crop=args.use_expand_crop,
+        use_expand_crop=True,
     )
     val_transforms = DetectionTransforms(
         target_size=(args.img_size, args.img_size), is_train=False, multi_scale=False
@@ -323,14 +324,11 @@ def main():
         args.train_data,
         args.image_dir,
         transforms=train_transforms,
-        use_mosaic=args.use_mosaic,
-        mosaic_prob=args.mosaic_prob,
     )
     val_dataset = ObjectDetectionDataset(
         args.val_data,
         args.val_image_dir,
         transforms=val_transforms,
-        use_mosaic=False,
     )
 
     train_sampler = DistributedSampler(train_dataset, shuffle=True) if is_distributed else None
@@ -370,6 +368,11 @@ def main():
         fc_dim=args.fc_dim,
         dropout_p=args.dropout,
         pretrained=True,
+        box_loss_type=args.box_loss_type,
+        box_loss_weight=args.box_loss_weight,
+        use_soft_nms=args.use_soft_nms,
+        soft_nms_sigma=args.soft_nms_sigma,
+        soft_nms_method=args.soft_nms_method,
     ).to(device)
 
     # Wrap model with DDP if multi-GPU
@@ -430,11 +433,6 @@ def main():
         if is_distributed:
             train_sampler.set_epoch(epoch)
 
-        # Disable mosaic augmentation in the last 5 epochs for clean fine-tuning
-        if args.use_mosaic and epoch >= args.epochs - 5:
-            train_dataset.use_mosaic = False
-            if is_main_process(rank) and epoch == args.epochs - 5:
-                print("Mosaic augmentation disabled for final 5 epochs (clean fine-tuning).")
 
         if is_main_process(rank):
             print(f"\n--- Epoch {epoch+1}/{args.epochs} ---")

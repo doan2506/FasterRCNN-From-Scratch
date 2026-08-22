@@ -1,3 +1,4 @@
+import math
 import torch
 
 
@@ -106,3 +107,113 @@ def clip_boxes(boxes: torch.Tensor, image_shape: tuple) -> torch.Tensor:
     boxes[..., 2] = boxes[..., 2].clamp(min=0, max=w)
     boxes[..., 3] = boxes[..., 3].clamp(min=0, max=h)
     return boxes
+
+
+def bbox_iou_loss(
+    pred_boxes: torch.Tensor,
+    target_boxes: torch.Tensor,
+    loss_type: str = "ciou",
+    reduction: str = "mean",
+    eps: float = 1e-7,
+) -> torch.Tensor:
+    """
+    Computes IoU-based bounding box regression loss (GIoU, DIoU, CIoU, standard IoU)
+    between predicted boxes and target ground-truth boxes.
+
+    pred_boxes: Tensor (N, 4) in format [xmin, ymin, xmax, ymax]
+    target_boxes: Tensor (N, 4) in format [xmin, ymin, xmax, ymax]
+    loss_type: 'ciou', 'giou', 'diou', or 'iou'
+    reduction: 'mean', 'sum', or 'none'
+    Returns: Loss tensor
+    """
+    if pred_boxes.numel() == 0 or target_boxes.numel() == 0:
+        if reduction == "none":
+            return torch.empty((0,), device=pred_boxes.device)
+        return torch.tensor(0.0, device=pred_boxes.device)
+
+    # 1. Coordinate unpacking
+    p_x1, p_y1, p_x2, p_y2 = pred_boxes[:, 0], pred_boxes[:, 1], pred_boxes[:, 2], pred_boxes[:, 3]
+    t_x1, t_y1, t_x2, t_y2 = target_boxes[:, 0], target_boxes[:, 1], target_boxes[:, 2], target_boxes[:, 3]
+
+    p_w = (p_x2 - p_x1).clamp(min=eps)
+    p_h = (p_y2 - p_y1).clamp(min=eps)
+    t_w = (t_x2 - t_x1).clamp(min=eps)
+    t_h = (t_y2 - t_y1).clamp(min=eps)
+
+    p_area = p_w * p_h
+    t_area = t_w * t_h
+
+    # 2. Intersection Area
+    inter_x1 = torch.max(p_x1, t_x1)
+    inter_y1 = torch.max(p_y1, t_y1)
+    inter_x2 = torch.min(p_x2, t_x2)
+    inter_y2 = torch.min(p_y2, t_y2)
+
+    inter_w = (inter_x2 - inter_x1).clamp(min=0.0)
+    inter_h = (inter_y2 - inter_y1).clamp(min=0.0)
+    inter_area = inter_w * inter_h
+
+    # 3. Union Area & IoU
+    union_area = p_area + t_area - inter_area
+    iou = inter_area / union_area.clamp(min=eps)
+
+    loss_type = loss_type.lower()
+    if loss_type == "iou":
+        loss = 1.0 - iou
+    elif loss_type == "giou":
+        # Smallest enclosing box
+        c_x1 = torch.min(p_x1, t_x1)
+        c_y1 = torch.min(p_y1, t_y1)
+        c_x2 = torch.max(p_x2, t_x2)
+        c_y2 = torch.max(p_y2, t_y2)
+        c_area = (c_x2 - c_x1).clamp(min=0.0) * (c_y2 - c_y1).clamp(min=0.0)
+        giou = iou - (c_area - union_area) / c_area.clamp(min=eps)
+        loss = 1.0 - giou
+    elif loss_type in ["diou", "ciou"]:
+        # Smallest enclosing box diagonal
+        c_x1 = torch.min(p_x1, t_x1)
+        c_y1 = torch.min(p_y1, t_y1)
+        c_x2 = torch.max(p_x2, t_x2)
+        c_y2 = torch.max(p_y2, t_y2)
+        c_diag_sq = (c_x2 - c_x1).clamp(min=0.0) ** 2 + (c_y2 - c_y1).clamp(min=0.0) ** 2 + eps
+
+        # Center distance squared
+        p_ctr_x = (p_x1 + p_x2) * 0.5
+        p_ctr_y = (p_y1 + p_y2) * 0.5
+        t_ctr_x = (t_x1 + t_x2) * 0.5
+        t_ctr_y = (t_y1 + t_y2) * 0.5
+        rho_sq = (p_ctr_x - t_ctr_x) ** 2 + (p_ctr_y - t_ctr_y) ** 2
+
+        diou = iou - rho_sq / c_diag_sq
+        if loss_type == "diou":
+            loss = 1.0 - diou
+        else:  # CIoU
+            v = (4.0 / (math.pi ** 2)) * torch.pow(torch.atan(t_w / t_h) - torch.atan(p_w / p_h), 2)
+            with torch.no_grad():
+                alpha = v / (1.0 - iou + v + eps)
+            ciou = diou - alpha * v
+            loss = 1.0 - ciou
+    else:
+        raise ValueError(f"Unsupported loss_type: {loss_type}. Choose from 'ciou', 'giou', 'diou', 'iou'.")
+
+    if reduction == "mean":
+        return loss.mean()
+    elif reduction == "sum":
+        return loss.sum()
+    elif reduction == "none":
+        return loss
+    else:
+        raise ValueError(f"Unsupported reduction: {reduction}")
+
+
+def giou_loss(pred_boxes: torch.Tensor, target_boxes: torch.Tensor, reduction: str = "mean") -> torch.Tensor:
+    return bbox_iou_loss(pred_boxes, target_boxes, loss_type="giou", reduction=reduction)
+
+
+def ciou_loss(pred_boxes: torch.Tensor, target_boxes: torch.Tensor, reduction: str = "mean") -> torch.Tensor:
+    return bbox_iou_loss(pred_boxes, target_boxes, loss_type="ciou", reduction=reduction)
+
+
+def diou_loss(pred_boxes: torch.Tensor, target_boxes: torch.Tensor, reduction: str = "mean") -> torch.Tensor:
+    return bbox_iou_loss(pred_boxes, target_boxes, loss_type="diou", reduction=reduction)
+

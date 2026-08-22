@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from utils.box_utils import box_iou, box_transform, box_decode, clip_boxes
+from utils.box_utils import box_iou, box_transform, box_decode, clip_boxes, bbox_iou_loss
 from utils.nms import nms
 
 
@@ -21,8 +21,8 @@ class RPNAnchorGenerator(nn.Module):
         super().__init__()
         self.strides = strides
         self.base_sizes = base_sizes
-        self.register_buffer("ratios", torch.tensor(ratios, dtype=torch.float32))
-        self.register_buffer("scales", torch.tensor(scales, dtype=torch.float32))
+        self.register_buffer("ratios", torch.tensor(ratios, dtype=torch.float32), persistent=False)
+        self.register_buffer("scales", torch.tensor(scales, dtype=torch.float32), persistent=False)
         self.num_anchors_per_location = len(ratios) * len(scales)
 
     def _generate_base_anchors(self, base_size: float, device: torch.device) -> torch.Tensor:
@@ -142,6 +142,7 @@ class RegionProposalNetwork(nn.Module):
         rpn_nms_thresh=0.7,
         rpn_batch_size_per_image=256,
         rpn_positive_fraction=0.5,
+        box_loss_type="smooth_l1",
     ):
         super().__init__()
         self.anchor_generator = RPNAnchorGenerator(ratios=ratios, scales=scales)
@@ -154,6 +155,7 @@ class RegionProposalNetwork(nn.Module):
         self.nms_thresh = rpn_nms_thresh
         self.batch_size_per_image = rpn_batch_size_per_image
         self.positive_fraction = rpn_positive_fraction
+        self.box_loss_type = box_loss_type.lower()
 
     def forward(self, feature_maps: dict, image_shape: tuple, targets: list = None):
         """
@@ -278,14 +280,18 @@ class RegionProposalNetwork(nn.Module):
             b_cls_loss = F.binary_cross_entropy_with_logits(sampled_logits, sampled_targets, reduction="sum")
             total_cls_loss += b_cls_loss / max(len(sampled_indices), 1)
 
-            # 2. RPN Regression Loss (Smooth L1 on positive anchors)
+            # 2. RPN Regression Loss (CIoU / GIoU or Smooth L1 on positive anchors)
             if len(pos_keep) > 0:
                 pos_anchors = anchors[pos_keep]
                 pos_gt_boxes = gt_boxes[best_gt_idx[pos_keep]]
-                target_deltas = box_transform(pos_anchors, pos_gt_boxes)
                 pred_pos_deltas = bbox_deltas[b, pos_keep]
 
-                b_reg_loss = F.smooth_l1_loss(pred_pos_deltas, target_deltas, beta=1.0 / 9.0, reduction="sum")
+                if self.box_loss_type in ["ciou", "giou", "diou", "iou"]:
+                    pred_pos_boxes = box_decode(pos_anchors, pred_pos_deltas)
+                    b_reg_loss = bbox_iou_loss(pred_pos_boxes, pos_gt_boxes, loss_type=self.box_loss_type, reduction="sum")
+                else:
+                    target_deltas = box_transform(pos_anchors, pos_gt_boxes)
+                    b_reg_loss = F.smooth_l1_loss(pred_pos_deltas, target_deltas, beta=1.0 / 9.0, reduction="sum")
                 total_reg_loss += b_reg_loss / max(len(pos_keep), 1)
                 total_positives += len(pos_keep)
 

@@ -8,7 +8,7 @@ import torchvision.transforms.functional as F
 from PIL import Image
 from models.faster_rcnn import FasterRCNN
 from utils.dataset import CLASSES, IDX_TO_CLASS
-from utils.nms import batched_nms
+from utils.nms import batched_nms, batched_soft_nms
 
 
 # Default direct download URL for best.pth (can be customized with release URL)
@@ -28,6 +28,9 @@ def parse_args():
     parser.add_argument("--batch_size", type=int, default=8, help="Batch size for faster inference")
     parser.add_argument("--use_tta", action="store_true", default=True, help="Enable Test-Time Augmentation (default: True)")
     parser.add_argument("--no_tta", dest="use_tta", action="store_false", help="Disable Test-Time Augmentation")
+    parser.add_argument("--use_soft_nms", action="store_true", default=False, help="Enable Soft-NMS (default: False)")
+    parser.add_argument("--soft_nms_sigma", type=float, default=0.5, help="Soft-NMS Gaussian sigma (default: 0.5)")
+    parser.add_argument("--soft_nms_method", type=str, default="gaussian", choices=["gaussian", "linear", "hard"], help="Soft-NMS method (default: gaussian)")
     return parser.parse_args()
 
 
@@ -36,16 +39,26 @@ def download_weights(url: str, dest_path: str):
     Auto-downloads weights if not found locally, as required by the submission guidelines.
     """
     os.makedirs(os.path.dirname(os.path.abspath(dest_path)), exist_ok=True)
-    print(f"📥 Checkpoint not found at {dest_path}. Automatically downloading from:\n   {url} ...")
+    print(f"[INFO] Checkpoint not found at {dest_path}. Automatically downloading from:\n   {url} ...")
     try:
         urllib.request.urlretrieve(url, dest_path)
-        print(f"✅ Successfully downloaded weights to {dest_path}")
+        print(f"[OK] Successfully downloaded weights to {dest_path}")
     except Exception as e:
-        print(f"⚠️ Failed to auto-download weights from {url}: {e}")
+        print(f"[WARNING] Failed to auto-download weights from {url}: {e}")
         print("   Please make sure the checkpoint is available or provide a valid --weights_url.")
 
 
-def load_model(model_path: str, backbone: str, conf_thresh: float, nms_thresh: float, device: torch.device, weights_url: str = DEFAULT_WEIGHTS_URL):
+def load_model(
+    model_path: str,
+    backbone: str,
+    conf_thresh: float,
+    nms_thresh: float,
+    device: torch.device,
+    weights_url: str = DEFAULT_WEIGHTS_URL,
+    use_soft_nms: bool = False,
+    soft_nms_sigma: float = 0.5,
+    soft_nms_method: str = "gaussian",
+):
     # Auto-download weights if missing
     if not os.path.exists(model_path):
         download_weights(weights_url, model_path)
@@ -61,7 +74,7 @@ def load_model(model_path: str, backbone: str, conf_thresh: float, nms_thresh: f
     detected_backbone = backbone
     detected_fc_dim = 1024
     detected_ratios = (0.5, 1.0, 2.0)
-    detected_scales = (1.0, 2 ** (1 / 3), 2 ** (2 / 3))
+    detected_scales = (1.0,)
     state_dict = None
 
     if checkpoint is not None:
@@ -96,13 +109,16 @@ def load_model(model_path: str, backbone: str, conf_thresh: float, nms_thresh: f
         pretrained=False,
         conf_threshold=conf_thresh,
         nms_threshold=nms_thresh,
+        use_soft_nms=use_soft_nms,
+        soft_nms_sigma=soft_nms_sigma,
+        soft_nms_method=soft_nms_method,
     )
 
     if state_dict is not None:
-        model.load_state_dict(state_dict)
-        print("✅ Checkpoint weights successfully loaded.")
+        model.load_state_dict(state_dict, strict=False)
+        print("[OK] Checkpoint weights successfully loaded.")
     else:
-        print(f"⚠️ Warning: Checkpoint {model_path} not found! Initializing with random/pretrained weights.")
+        print(f"[WARNING] Checkpoint {model_path} not found! Initializing with random/pretrained weights.")
 
     model.to(device)
     model.eval()
@@ -160,13 +176,29 @@ def infer_batch(model, batch_tensors, device, use_tta=False):
             all_boxes, all_scores, all_labels = o_boxes, o_scores, o_labels
 
         if len(all_boxes) > 0:
-            keep = batched_nms(all_boxes, all_scores, all_labels, model.nms_threshold)
-            if len(keep) > model.max_detections_per_img:
-                keep = keep[: model.max_detections_per_img]
+            if hasattr(model.roi_heads, "use_soft_nms") and model.roi_heads.use_soft_nms:
+                m_boxes, m_scores, m_labels = batched_soft_nms(
+                    all_boxes,
+                    all_scores,
+                    all_labels,
+                    iou_threshold=model.nms_threshold,
+                    sigma=model.roi_heads.soft_nms_sigma,
+                    score_threshold=model.conf_threshold,
+                    method=model.roi_heads.soft_nms_method,
+                )
+            else:
+                keep = batched_nms(all_boxes, all_scores, all_labels, model.nms_threshold)
+                m_boxes, m_scores, m_labels = all_boxes[keep], all_scores[keep], all_labels[keep]
+
+            if len(m_boxes) > model.max_detections_per_img:
+                m_boxes = m_boxes[: model.max_detections_per_img]
+                m_scores = m_scores[: model.max_detections_per_img]
+                m_labels = m_labels[: model.max_detections_per_img]
+
             merged_results.append({
-                "boxes": all_boxes[keep],
-                "scores": all_scores[keep],
-                "labels": all_labels[keep],
+                "boxes": m_boxes,
+                "scores": m_scores,
+                "labels": m_labels,
             })
         else:
             merged_results.append(orig_res)
@@ -186,6 +218,9 @@ def main():
         args.nms_thresh,
         device,
         args.weights_url,
+        use_soft_nms=args.use_soft_nms,
+        soft_nms_sigma=args.soft_nms_sigma,
+        soft_nms_method=args.soft_nms_method,
     )
 
     # Gather all image files

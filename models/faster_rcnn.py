@@ -36,6 +36,11 @@ class FasterRCNN(nn.Module):
         dropout_p=0.0,
         roi_batch_size_per_image=512,
         roi_positive_fraction=0.25,
+        box_loss_type="smooth_l1",
+        box_loss_weight=1.0,
+        use_soft_nms=False,
+        soft_nms_sigma=0.5,
+        soft_nms_method="gaussian",
     ):
         super().__init__()
         self.num_classes = num_classes
@@ -61,6 +66,7 @@ class FasterRCNN(nn.Module):
             rpn_nms_thresh=0.7,
             rpn_batch_size_per_image=256,
             rpn_positive_fraction=0.5,
+            box_loss_type=box_loss_type,
         )
 
         # 4. RoI Head (Multi-Scale RoIAlign + Fast R-CNN 2-FC Head with Dropout)
@@ -78,6 +84,11 @@ class FasterRCNN(nn.Module):
             score_thresh=conf_threshold,
             nms_thresh=nms_threshold,
             detections_per_img=max_detections_per_img,
+            box_loss_type=box_loss_type,
+            box_loss_weight=box_loss_weight,
+            use_soft_nms=use_soft_nms,
+            soft_nms_sigma=soft_nms_sigma,
+            soft_nms_method=soft_nms_method,
         )
 
     def forward(self, images: torch.Tensor, targets: list = None):
