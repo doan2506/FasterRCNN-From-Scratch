@@ -11,7 +11,7 @@ class FastRCNNHead(nn.Module):
     Standard Two-FC MLP Head for Fast R-CNN classification and class-specific bounding box regression.
     """
 
-    def __init__(self, in_channels=256, roi_size=(7, 7), num_classes=5, fc_dim=1024, dropout_p=0.3):
+    def __init__(self, in_channels=256, roi_size=(7, 7), num_classes=5, fc_dim=1024, dropout_p=0.0):
         super().__init__()
         self.num_classes = num_classes
         in_dim = in_channels * roi_size[0] * roi_size[1]
@@ -66,7 +66,7 @@ class RoIHeads(nn.Module):
         num_classes=5,
         roi_size=(7, 7),
         fc_dim=1024,
-        dropout_p=0.3,
+        dropout_p=0.0,
         batch_size_per_image=512,
         positive_fraction=0.25,
         fg_iou_thresh=0.5,
@@ -130,73 +130,65 @@ class RoIHeads(nn.Module):
             detections = self._post_process(cls_scores, bbox_deltas, proposals_list, image_shapes)
             return detections, {}
 
-    def _select_training_samples(self, proposals_list: list, targets: list):
+    def _sample_roi_targets(self, proposals_list: list, targets: list, device: torch.device):
         sampled_proposals = []
         sampled_labels = []
         sampled_deltas = []
 
-        device = proposals_list[0].device if len(proposals_list) > 0 else torch.device("cpu")
+        for proposals, target in zip(proposals_list, targets):
+            gt_boxes = target["boxes"].to(device)
+            gt_labels = target["labels"].to(device)
 
-        for b, props in enumerate(proposals_list):
-            gt_boxes = targets[b]["boxes"].to(device)
-            gt_labels = targets[b]["labels"].to(device)
-
-            # Append GT boxes to proposals to guarantee high-quality positive anchors exist
-            if gt_boxes.numel() > 0:
-                all_props = torch.cat([props, gt_boxes], dim=0)
+            if len(gt_boxes) > 0:
+                all_props = torch.cat([proposals, gt_boxes], dim=0)
             else:
-                all_props = props
+                all_props = proposals
 
-            if all_props.numel() == 0:
-                sampled_proposals.append(torch.empty((0, 4), device=device))
-                sampled_labels.append(torch.empty((0,), dtype=torch.int64, device=device))
-                sampled_deltas.append(torch.empty((0, 4), device=device))
+            if len(all_props) == 0:
+                sampled_proposals.append(torch.zeros((0, 4), device=device))
                 continue
 
-            if gt_boxes.numel() == 0:
-                # Background only
-                neg_idx = torch.randperm(len(all_props), device=device)[:self.batch_size_per_image]
-                sampled_proposals.append(all_props[neg_idx])
-                sampled_labels.append(torch.full((len(neg_idx),), self.bg_class_idx, dtype=torch.int64, device=device))
-                sampled_deltas.append(torch.zeros((len(neg_idx), 4), device=device))
+            if len(gt_boxes) == 0:
+                # All background
+                num_bg = min(len(all_props), self.batch_size_per_image)
+                sampled_proposals.append(all_props[:num_bg])
+                sampled_labels.append(torch.full((num_bg,), self.bg_class_idx, dtype=torch.int64, device=device))
+                sampled_deltas.append(torch.zeros((num_bg, 4), device=device))
                 continue
 
-            # Calculate IoU matrix (N_props, M_gt)
-            iou_matrix = box_iou(all_props, gt_boxes)
-            max_iou, best_gt_idx = iou_matrix.max(dim=1)
+            ious = box_iou(all_props, gt_boxes)  # (N_props, N_gt)
+            max_iou, best_gt_idx = ious.max(dim=1)
 
-            # Assign labels
-            pos_mask = max_iou >= self.fg_iou_thresh
-            neg_mask = (max_iou >= self.bg_iou_thresh_lo) & (max_iou < self.bg_iou_thresh_hi)
+            pos_idx = torch.nonzero(max_iou >= self.fg_iou_thresh).squeeze(1)
+            bg_idx = torch.nonzero((max_iou >= self.bg_iou_thresh_lo) & (max_iou < self.bg_iou_thresh_hi)).squeeze(1)
 
-            pos_indices = torch.where(pos_mask)[0]
-            neg_indices = torch.where(neg_mask)[0]
-
-            # Sample positive RoIs (up to 25%)
-            max_pos = int(self.batch_size_per_image * self.positive_fraction)
-            if len(pos_indices) > max_pos:
-                perm = torch.randperm(len(pos_indices), device=device)
-                pos_keep = pos_indices[perm[:max_pos]]
+            # Subsample
+            num_pos_req = int(self.batch_size_per_image * self.positive_fraction)
+            num_pos = min(len(pos_idx), num_pos_req)
+            if len(pos_idx) > 0 and num_pos > 0:
+                pos_perm = torch.randperm(len(pos_idx), device=device)[:num_pos]
+                pos_keep = pos_idx[pos_perm]
             else:
-                pos_keep = pos_indices
+                pos_keep = torch.empty(0, dtype=torch.int64, device=device)
 
-            # Sample negative RoIs to fill remainder of batch
-            max_neg = self.batch_size_per_image - len(pos_keep)
-            if len(neg_indices) > max_neg:
-                perm = torch.randperm(len(neg_indices), device=device)
-                neg_keep = neg_indices[perm[:max_neg]]
+            num_bg_req = self.batch_size_per_image - len(pos_keep)
+            num_bg = min(len(bg_idx), num_bg_req)
+            if len(bg_idx) > 0 and num_bg > 0:
+                bg_perm = torch.randperm(len(bg_idx), device=device)[:num_bg]
+                bg_keep = bg_idx[bg_perm]
             else:
-                neg_keep = neg_indices
+                bg_keep = torch.empty(0, dtype=torch.int64, device=device)
 
-            keep = torch.cat([pos_keep, neg_keep])
+            keep = torch.cat([pos_keep, bg_keep], dim=0)
+            if len(keep) == 0:
+                sampled_proposals.append(torch.zeros((0, 4), device=device))
+                continue
+
             b_proposals = all_props[keep]
-
-            # Labels for kept proposals
             b_labels = torch.full((len(keep),), self.bg_class_idx, dtype=torch.int64, device=device)
             if len(pos_keep) > 0:
                 b_labels[:len(pos_keep)] = gt_labels[best_gt_idx[pos_keep]]
 
-            # Targets deltas for positive proposals
             b_deltas = torch.zeros((len(keep), 4), device=device)
             if len(pos_keep) > 0:
                 matched_gt = gt_boxes[best_gt_idx[pos_keep]]
@@ -209,12 +201,15 @@ class RoIHeads(nn.Module):
 
         return sampled_proposals, torch.cat(sampled_labels, dim=0), torch.cat(sampled_deltas, dim=0)
 
+    def _select_training_samples(self, proposals_list: list, targets: list):
+        return self._sample_roi_targets(proposals_list, targets, proposals_list[0].device)
+
     def _compute_losses(self, cls_scores: torch.Tensor, bbox_deltas: torch.Tensor, labels: torch.Tensor, target_deltas: torch.Tensor):
         if len(labels) == 0:
             return torch.tensor(0.0, device=cls_scores.device), torch.tensor(0.0, device=cls_scores.device)
 
-        # 1. Classification CrossEntropy Loss with Label Smoothing over (num_classes + 1)
-        loss_cls = F.cross_entropy(cls_scores, labels, label_smoothing=0.1)
+        # 1. Classification CrossEntropy Loss over (num_classes + 1)
+        loss_cls = F.cross_entropy(cls_scores, labels)
 
         # 2. Regression Loss strictly on foreground positive RoIs
         pos_mask = labels < self.bg_class_idx

@@ -33,20 +33,21 @@ def parse_args():
     parser.add_argument("--backbone", type=str, default="resnet50", choices=["resnet18", "resnet34", "resnet50"], help="Backbone architecture")
 
     # Training Hyperparameters
-    parser.add_argument("--epochs", type=int, default=60, help="Number of training epochs (default: 60)")
+    parser.add_argument("--epochs", type=int, default=30, help="Number of training epochs (default: 30)")
     parser.add_argument("--batch_size", type=int, default=8, help="Batch size per GPU (default: 8)")
-    parser.add_argument("--optimizer", type=str, default="sgd", choices=["sgd", "adamw"], help="Optimizer type (default: sgd)")
-    parser.add_argument("--lr", type=float, default=0.01, help="Base learning rate for heads/RPN (default: 0.01 for SGD, 1e-4 for AdamW)")
+    parser.add_argument("--optimizer", type=str, default="adamw", choices=["sgd", "adamw"], help="Optimizer type (default: adamw)")
+    parser.add_argument("--lr", type=float, default=1e-4, help="Base learning rate for heads/RPN (default: 1e-4)")
     parser.add_argument("--momentum", type=float, default=0.9, help="SGD momentum (default: 0.9)")
     parser.add_argument("--backbone_lr_ratio", type=float, default=0.1, help="LR multiplier for backbone fine-tuning (default: 0.1)")
     parser.add_argument("--weight_decay", type=float, default=1e-4, help="Weight decay (default: 1e-4)")
     parser.add_argument("--num_workers", type=int, default=2, help="DataLoader num workers")
     parser.add_argument("--img_size", type=int, default=640, help="Target image square size for training")
     parser.add_argument("--fc_dim", type=int, default=1024, help="FC dimension in Fast R-CNN Head (default: 1024)")
-    parser.add_argument("--dropout", type=float, default=0.3, help="Dropout probability in Fast R-CNN Head (default: 0.3)")
+    parser.add_argument("--dropout", type=float, default=0.0, help="Dropout probability in Fast R-CNN Head (default: 0.0)")
 
     # Advanced training options
-    parser.add_argument("--use_expand_crop", action="store_true", default=False, help="Enable random expand + crop data augmentation (default: False)")
+    parser.add_argument("--use_expand_crop", action="store_true", default=True, help="Enable random expand + crop data augmentation (default: True)")
+    parser.add_argument("--no_expand_crop", dest="use_expand_crop", action="store_false", help="Disable random expand + crop data augmentation")
     parser.add_argument("--use_mosaic", action="store_true", default=False, help="Enable selective mosaic 4-image data augmentation (default: False)")
     parser.add_argument("--mosaic_prob", type=float, default=0.3, help="Probability for mosaic augmentation when enabled (default: 0.3)")
     parser.add_argument("--warmup_iters", type=int, default=500, help="Number of warmup iterations for LR")

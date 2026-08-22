@@ -16,7 +16,7 @@ class RPNAnchorGenerator(nn.Module):
         strides=(4, 8, 16, 32, 64),
         base_sizes=(32, 64, 128, 256, 512),
         ratios=(0.5, 1.0, 2.0),
-        scales=(1.0, 2 ** (1 / 3), 2 ** (2 / 3)),
+        scales=(1.0,),
     ):
         super().__init__()
         self.strides = strides
@@ -134,7 +134,7 @@ class RegionProposalNetwork(nn.Module):
         self,
         in_channels=256,
         ratios=(0.5, 1.0, 2.0),
-        scales=(1.0, 2 ** (1 / 3), 2 ** (2 / 3)),
+        scales=(1.0,),
         rpn_pre_nms_top_n_train=2000,
         rpn_post_nms_top_n_train=2000,
         rpn_pre_nms_top_n_test=1000,
